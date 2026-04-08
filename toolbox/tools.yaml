@@ -1,0 +1,152 @@
+# Task 2.1 — MCP Toolbox tools.yaml
+#
+# Purpose of MCP Toolbox in this build:
+#   - Document and project retrieval (no vector search)
+#   - Audit log writes
+#   - Claude Chat verification backbone (independent BigQuery access)
+#
+# Vector search is NOT in this file. VECTOR_SEARCH() cannot be parameterised
+# with ARRAY<FLOAT64> via tools.yaml — it runs in api/vector_search.py.
+
+sources:
+  c2-bigquery:
+    kind: bigquery
+    project: c2-intelligence
+    location: me-central1   # update if region split decided in Task 0.1
+
+tools:
+  list_project_documents:
+    kind: bigquery-sql
+    source: c2-bigquery
+    description: List all active documents for a project
+    parameters:
+      - name: project_id
+        type: string
+        description: The project ID
+    statement: |
+      SELECT document_id, layer, document_type, file_name,
+             page_count, processing_method, ingested_at
+      FROM `c2-intelligence.c2_warehouse.documents`
+      WHERE project_id = @project_id AND status = 'ACTIVE'
+      ORDER BY layer, document_type, file_name
+
+  get_project_summary:
+    kind: bigquery-sql
+    source: c2-bigquery
+    description: Get document and chunk counts for a project by layer
+    parameters:
+      - name: project_id
+        type: string
+        description: The project ID
+    statement: |
+      SELECT
+        d.layer,
+        COUNT(DISTINCT d.document_id) AS document_count,
+        COUNT(c.chunk_id) AS chunk_count,
+        SUM(d.page_count) AS total_pages
+      FROM `c2-intelligence.c2_warehouse.documents` d
+      LEFT JOIN `c2-intelligence.c2_warehouse.chunks` c
+        ON d.document_id = c.document_id
+      WHERE d.project_id = @project_id AND d.status = 'ACTIVE'
+      GROUP BY d.layer
+      ORDER BY d.layer
+
+  get_document_chunks:
+    kind: bigquery-sql
+    source: c2-bigquery
+    description: Retrieve all chunks for a specific document in order
+    parameters:
+      - name: document_id
+        type: string
+        description: The document ID
+    statement: |
+      SELECT chunk_index, chunk_text, page_number, section_ref, token_count
+      FROM `c2-intelligence.c2_warehouse.chunks`
+      WHERE document_id = @document_id
+      ORDER BY chunk_index ASC
+
+  get_user_projects:
+    kind: bigquery-sql
+    source: c2-bigquery
+    description: Get projects accessible to a user
+    parameters:
+      - name: user_id
+        type: string
+        description: Firebase user ID
+    statement: |
+      SELECT p.project_id, p.project_name, p.client_name,
+             p.contract_type, p.jurisdiction, pm.role
+      FROM `c2-intelligence.c2_warehouse.project_members` pm
+      JOIN `c2-intelligence.c2_warehouse.projects` p
+        ON pm.project_id = p.project_id
+      WHERE pm.user_id = @user_id AND p.is_active = TRUE
+      ORDER BY p.project_name
+
+  write_audit_log:
+    kind: bigquery-sql
+    source: c2-bigquery
+    description: Write an audit log entry
+    parameters:
+      - name: log_id
+        type: string
+      - name: project_id
+        type: string
+      - name: session_id
+        type: string
+      - name: user_id
+        type: string
+      - name: user_email
+        type: string
+      - name: action
+        type: string
+      - name: domain
+        type: string
+      - name: query_text
+        type: string
+      - name: chunks_retrieved
+        type: integer
+      - name: model_used
+        type: string
+      - name: latency_ms
+        type: integer
+    statement: |
+      INSERT INTO `c2-intelligence.c2_warehouse.audit_log`
+        (log_id, project_id, session_id, user_id, user_email, action,
+         domain, query_text, chunks_retrieved, model_used, latency_ms)
+      VALUES
+        (@log_id, @project_id, @session_id, @user_id, @user_email, @action,
+         @domain, @query_text, @chunks_retrieved, @model_used, @latency_ms)
+
+  list_all_projects:
+    kind: bigquery-sql
+    source: c2-bigquery
+    description: List all active projects (admin/verification use)
+    parameters: []
+    statement: |
+      SELECT project_id, project_name, client_name, jurisdiction, created_at
+      FROM `c2-intelligence.c2_warehouse.projects`
+      WHERE is_active = TRUE
+      ORDER BY created_at DESC
+
+toolsets:
+  c2-retrieval:
+    - list_project_documents
+    - get_project_summary
+    - get_document_chunks
+    - get_user_projects
+
+  c2-write:
+    - write_audit_log
+
+  c2-admin:
+    - list_all_projects
+    - get_project_summary
+    - list_project_documents
+
+  c2-all:
+    - list_project_documents
+    - get_project_summary
+    - get_document_chunks
+    - get_user_projects
+    - write_audit_log
+    - list_all_projects
