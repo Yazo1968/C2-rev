@@ -1,17 +1,60 @@
-# C2 Intelligence — Session Protocol
+# C2 Intelligence — CLAUDE.md
+# Read this file completely at the start of every session before taking any action.
 
-This file is read at the start of every Claude Code session working on this repo. Read it, then act.
+---
 
-## Session opening protocol
+## 1. Session Opening Protocol
 
-1. `cd C2Intelligence-v2 && git pull origin main`
-2. Read this file (CLAUDE.md).
+Execute in order at the start of every session:
+
+1. `cd C2-rev && git pull origin main`
+2. Read this file in full.
 3. `gcloud config set project c2-intelligence`
-4. Confirm MCP Toolbox service is running: `gcloud run services describe c2-toolbox --region <REGION> --format='value(status.url)'`
-5. Confirm `git rev-parse HEAD` matches the commit you expect to be working from.
-6. Then act. **Never clone — always pull.**
+4. If MCP Toolbox is deployed, confirm it is running:
+   `gcloud run services describe c2-toolbox --region me-central1 --format='value(status.url)'`
+5. Confirm HEAD: `git rev-parse HEAD`
+6. Read **§12 Current Build State** to identify the next task.
+7. Read the relevant task section in `C2_MASTER_PLAN.md`.
+8. Then act. **Never clone — always pull.**
 
-## Naming conventions (locked)
+---
+
+## 2. Roles
+
+| Role | Responsibility |
+|---|---|
+| Yasser | Domain expert, product owner, approval gate before every commit |
+| Claude Chat | Architecture, SQL, tools.yaml, prompts, independent verification via MCP Toolbox |
+| Claude Code | Execution only — one task per commit, no action without explicit instruction from Yasser |
+
+---
+
+## 3. Execution Rules
+
+1. **One task per commit. No batching.** Two small tasks are still two commits.
+2. **QG PASS required before the next task.** Issued by Claude Chat only after independent verification. Never by Claude Code.
+3. **No self-reporting.** Claude Code never declares a task complete or writes PASS.
+4. **Yasser approves every commit** before Claude Code proceeds.
+5. **Always `git pull` before any work.** Never clone.
+6. **Secrets in Secret Manager only.** Never hardcoded. Never in committed env defaults.
+7. **Never `@latest` for the Claude model string.**
+8. **API versioned at `/api/v1/`.** Do not change.
+9. **Do not build v1.1 features.** See §14.
+10. **Deploy order is mandatory.** See §11. Never deploy out of sequence.
+
+---
+
+## 4. Verification Backbone
+
+Claude Chat connects to `c2-toolbox` via OAuth as a custom MCP connector in Claude.ai. Every task that touches BigQuery is verified by Claude Chat before PASS is issued.
+
+**No PASS can be issued for any BigQuery task until Task 2.5 confirms the connector is working.** The build blocks here until confirmed.
+
+For infrastructure tasks: verification is via `gcloud` CLI output or Console screenshots shared by Yasser.
+
+---
+
+## 5. Naming Conventions (Locked)
 
 | Resource | Identifier |
 |---|---|
@@ -19,70 +62,165 @@ This file is read at the start of every Claude Code session working on this repo
 | BigQuery dataset | `c2_warehouse` |
 | Service accounts | `c2-api`, `c2-ingestion`, `c2-toolbox` |
 | Cloud Run services | `c2-api`, `c2-ingestion`, `c2-toolbox` |
-| Cloud Storage buckets | `c2-documents-l1`, `c2-documents-l2a`, `c2-documents-l2b` (must be globally unique — append a project suffix if these are taken) |
+| Cloud Storage buckets | `c2-documents-l1`, `c2-documents-l2a`, `c2-documents-l2b` |
+| Artifact Registry repo | `c2-images` |
+| GLOBAL_STANDARDS project_id | `GLOBAL_STANDARDS` |
 
-## Region decision — TO BE FILLED IN AT TASK 0.1
+Bucket names must be globally unique. If taken, append a short suffix and record the actual names here.
 
-Run `infra/00_verify_region.sh` first. Record the outcome here:
+---
+
+## 6. Region Decision — Fill in at Task 0.1
+
+**Expected outcome: `SPLIT_REGIONS=YES`.** Claude on Vertex AI is not available in `me-central1` as of the planning date. Treat the split-region path as the default until Task 0.1 proves otherwise.
 
 ```
-REGION_BIGQUERY=        # me-central1 (target)
-REGION_CLOUD_RUN=       # me-central1 (target)
-REGION_VERTEX_AI=       # me-central1 if available, else europe-west4
+REGION_BIGQUERY=        # me-central1
+REGION_CLOUD_RUN=       # me-central1
+REGION_VERTEX_AI=       # me-central1 if confirmed; else europe-west4
 REGION_DOCUMENT_AI=     # eu (no GCC option)
-SPLIT_REGIONS=          # YES if Vertex AI not in me-central1, NO otherwise
+SPLIT_REGIONS=          # YES / NO
 DECISION_DATE=          # YYYY-MM-DD
 ```
 
-If `SPLIT_REGIONS=YES`, also document the cross-region data flow in `C2_MASTER_PLAN.md`.
+If `SPLIT_REGIONS=YES`, this affects: `api/claude_client.py`, `api/embeddings.py`, `ingestion/pipeline.py`, all Vertex AI deploy flags.
 
-## Locked Claude model ID — TO BE FILLED IN AT TASK 0.1
+---
 
-Read the exact `claude-…@YYYYMMDD` ID off the Vertex AI model garden. Store in Secret Manager as `CLAUDE_MODEL_ID`. **Never `@latest`.**
+## 7. Locked Claude Model ID — Fill in at Task 0.1
 
 ```
 CLAUDE_MODEL_ID=        # e.g. claude-sonnet-4-5@20251015
-SECRET_MANAGER_KEY=projects/c2-intelligence/secrets/CLAUDE_MODEL_ID/versions/latest
+SECRET_PATH=            projects/c2-intelligence/secrets/CLAUDE_MODEL_ID/versions/latest
 ```
 
-## Locked embedding configuration
+`api/config.py` raises at import time if `@latest` is detected. Never use `@latest` anywhere.
 
-| Setting | Value |
-|---|---|
-| Model | `text-embedding-004` |
-| Dimensions | `768` |
-| Chunk target | `500` tokens |
-| Chunk overlap | `50` tokens |
-| Max chunk | `600` tokens |
-| Min chunk | `50` tokens |
+---
 
-These are referenced as constants in `ingestion/pipeline.py`. Do not change.
+## 8. Locked Architecture Constants
 
-## Execution rules
+| Constant | Value | File |
+|---|---|---|
+| Embedding model | `text-embedding-004` | `ingestion/pipeline.py`, `api/embeddings.py` |
+| Embedding dimensions | `768` | All producers and consumers |
+| Embedding batch size | `25` | `ingestion/pipeline.py` |
+| Chunk target tokens | `500` | `ingestion/pipeline.py` |
+| Chunk overlap tokens | `50` | `ingestion/pipeline.py` |
+| Max chunk tokens | `600` | `ingestion/pipeline.py` |
+| Min chunk tokens | `50` | `ingestion/pipeline.py` |
+| Session context window | Last 10 turns | `api/sessions.py` |
+| Session expiry | 4 hours | `api/sessions.py` |
+| Auth cache TTL | 300 seconds | `api/auth.py` |
+| Project vector top_k | `8` (SQL literal) | `api/vector_search.py` |
+| L2b vector top_k | `4` (SQL literal) | `api/vector_search.py` |
 
-1. **One task per commit. No batching.**
-2. **QG PASS required before next task.** QG PASS = Claude Chat independently verifies via MCP Toolbox or `gcloud` CLI output.
-3. **No self-reporting.** Claude Code does not say "done" — Claude Chat verifies and says "PASS".
-4. Yasser approves each commit before Claude Code proceeds.
-5. Claude Code always runs `git pull` before any work. Never clones.
-6. Secrets in Secret Manager only. **Never hardcoded.** Never in environment variable defaults in source.
-7. API versioned at `/api/v1/`.
-8. Claude model string locked in Phase 0. Never `@latest`.
-9. Two-path PDF ingestion: digital → PyMuPDF (GCC-resident); scanned → Document AI EU endpoint (flagged `EXTERNAL_OCR`).
-10. Vector search runs in `c2-api` Python only — **NOT** via MCP Toolbox.
-11. Authorization is enforced at the API layer via `project_members` — **NOT** BigQuery RLS.
+All are code constants. None are environment variables.
 
-## Verification backbone
+---
 
-Claude Chat connects to `c2-toolbox` (deployed to Cloud Run with OAuth) as a custom MCP connector at claude.ai. Every task is independently verified by Claude Chat querying BigQuery directly through this connector before PASS is issued.
+## 9. Key Architecture Decisions
 
-If the MCP connector is not yet wired up, no PASS can be issued for any task that touches BigQuery — block on Phase 2.
+Full rationale in `C2_MASTER_PLAN.md §1`. These are the facts that directly affect how you write code:
 
-## Out of scope (deferred to v1.1)
+**Authorization**
+- Enforced at API layer via `project_members` table. Not BigQuery RLS.
+- `GLOBAL_STANDARDS` is open to all authenticated users. `user_has_project_access` must special-case this project_id and return `True` without querying `project_members`.
+- Auth cache: `cachetools.TTLCache(maxsize=1000, ttl=300)`. Never `functools.lru_cache` (no TTL support).
+
+**Vector search**
+- Runs in `c2-api` Python only. Not via MCP Toolbox.
+- Embedding is inlined as a float array literal in the SQL string.
+- `top_k` values are inlined as integer literals. BigQuery TVF arguments do not reliably accept named parameters.
+
+**Audit log**
+- Written via direct BigQuery DML INSERT from `api/audit.py`. Not via MCP Toolbox HTTP call.
+- `write_audit_log` in tools.yaml exists for admin/verification only.
+- Audit write is in a `finally` block in the SSE generator to survive client disconnection.
+
+**PDF ingestion**
+- Digital: PyMuPDF, stays in GCC, `GCC_NATIVE`.
+- Scanned: Document AI EU endpoint, `EXTERNAL_OCR`.
+- Frontend shows an acknowledgment banner on every upload. Detection is server-side only.
+
+**Claude SDK**
+- `anthropic[vertex]` package. `AnthropicVertex(project_id="c2-intelligence", region=VERTEX_REGION)` in `api/claude_client.py`.
+- Model ID injected via `--set-secrets CLAUDE_MODEL_ID=CLAUDE_MODEL_ID:latest` at Cloud Run deploy time.
+
+**Clause chunking**
+- `CLAUSE_PATTERN = re.compile(r'^(?:(?:Sub-)?[Cc]lause\s+)?(\d+[\d\.]*)\s+', re.IGNORECASE)`
+- Matches `8.4.1 Force Majeure` and `Sub-Clause 8.4 Engineer` formats.
+
+**Sessions**
+- State in BigQuery. Create and update use DML (not streaming insert).
+- 1-5 second update latency per turn is accepted in v1.0.
+
+**IVF index**
+- Created after Task 3.4. If creation fails (insufficient rows), log and proceed. BigQuery uses brute force automatically at query time.
+
+**Multi-domain queries**
+- Router returns a list of matched domains. Execution uses `domains[0]` as the primary agent.
+- Audit log records all matched domains as a comma-separated string.
+- Full multi-domain routing is v1.1.
+
+---
+
+## 10. Active Plan File
+
+All phases, tasks, SQL, shell commands, Python, prompts, Dockerfiles, and requirements are in:
+
+```
+C2_MASTER_PLAN.md
+```
+
+Read the relevant section before executing any task.
+
+---
+
+## 11. Deploy Order (Mandatory)
+
+| Step | Phase | Hard Dependency |
+|---|---|---|
+| 1 | Phase 0 — infra, IAM, buckets, Artifact Registry, secrets | None |
+| 2 | Phase 0 (manual) — Firebase setup | None (console only) |
+| 3 | Phase 1 — BigQuery schema + GLOBAL_STANDARDS record | Phase 0 complete |
+| 4 | Phase 2 — Toolbox build, deploy, OAuth, verify (Task 2.5 gate) | Phase 1 complete |
+| 5 | Phase 3 — Ingestion deploy, Document AI, test, index, L2b | Phase 2 gate passed |
+| 6 | Phase 4 — c2-api deploy | Phase 3 complete; INGESTION_URL + TOOLBOX_URL + CLAUDE_MODEL_ID known |
+| 7 | Phase 5 — Frontend build + Vercel deploy | Phase 4 complete; API_URL known |
+| 8 | Phase 6 — Model Armor, cost controls, billing alert | Phase 5 complete |
+
+---
+
+## 12. Current Build State
+
+```
+Last completed task : Scaffold — all files materialised, no GCP resources exist
+Last commit         : (scaffold commit)
+Next task           : Task 0.1 — Verify GCP service availability and lock region
+Verification status : pending (MCP Toolbox not yet deployed)
+```
+
+*Update after every verified task.*
+
+---
+
+## 13. Build Log
+
+Append-only. One entry per task. **Claude Code never writes PASS.**
+
+| Date | Task | Commit | Status |
+|---|---|---|---|
+| — | Scaffold — all files created, no GCP resources | (initial) | PASS (no verification needed) |
+
+---
+
+## 14. Out of Scope — v1.1 Only
 
 - Automated report generation
 - Multi-project comparison
 - Mobile-optimised UI
 - CMEK / customer-managed encryption keys
-
-Do not build these in v1.0.
+- Session-aware retrieval / query expansion
+- Multi-domain simultaneous routing
+- Session state migration to Firestore
