@@ -75,13 +75,15 @@ Bucket names must be globally unique. If taken, append a short suffix and record
 **Expected outcome: `SPLIT_REGIONS=YES`.** Claude on Vertex AI is not available in `me-central1` as of the planning date. Treat the split-region path as the default until Task 0.1 proves otherwise.
 
 ```
-REGION_BIGQUERY=        # me-central1
-REGION_CLOUD_RUN=       # me-central1
-REGION_VERTEX_AI=       # me-central1 if confirmed; else europe-west4
-REGION_DOCUMENT_AI=     # eu (no GCC option)
-SPLIT_REGIONS=          # YES / NO
-DECISION_DATE=          # YYYY-MM-DD
+REGION_BIGQUERY=me-central1
+REGION_CLOUD_RUN=me-central1
+REGION_VERTEX_AI=europe-west4
+REGION_DOCUMENT_AI=eu
+SPLIT_REGIONS=YES
+DECISION_DATE=2026-04-09
 ```
+
+> **Note:** Vertex AI `me-central1` availability to be re-verified after Task 0.2 — proceeding with `SPLIT_REGIONS=YES` per plan default. Cloud Run `me-central1` confirmed available.
 
 If `SPLIT_REGIONS=YES`, this affects: `api/claude_client.py`, `api/embeddings.py`, `ingestion/pipeline.py`, all Vertex AI deploy flags.
 
@@ -90,7 +92,7 @@ If `SPLIT_REGIONS=YES`, this affects: `api/claude_client.py`, `api/embeddings.py
 ## 7. Locked Claude Model ID — Fill in at Task 0.1
 
 ```
-CLAUDE_MODEL_ID=        # e.g. claude-sonnet-4-5@20251015
+CLAUDE_MODEL_ID=        # PENDING — fill after Task 0.2 when Vertex AI Model Garden is accessible
 SECRET_PATH=            projects/c2-intelligence/secrets/CLAUDE_MODEL_ID/versions/latest
 ```
 
@@ -195,9 +197,9 @@ Read the relevant section before executing any task.
 ## 12. Current Build State
 
 ```
-Last completed task : Scaffold — all files materialised, no GCP resources exist
-Last commit         : (scaffold commit)
-Next task           : Task 0.1 — Verify GCP service availability and lock region
+Last completed task : Task 0.1 (partial) — region decision locked, model ID pending Task 0.2
+Last commit         : task-0.1
+Next task           : Task 0.2 — Create GCP project and enable APIs
 Verification status : pending (MCP Toolbox not yet deployed)
 ```
 
@@ -212,6 +214,7 @@ Append-only. One entry per task. **Claude Code never writes PASS.**
 | Date | Task | Commit | Status |
 |---|---|---|---|
 | — | Scaffold — all files created, no GCP resources | (initial) | PASS (no verification needed) |
+| 2026-04-09 | Task 0.1 — Lock region decision (SPLIT_REGIONS=YES), model ID deferred to post-0.2 | task-0.1 | partial — awaiting model ID |
 
 ---
 
