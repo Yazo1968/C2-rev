@@ -688,133 +688,153 @@ Set up via BigQuery console: Scheduled Queries → Create → paste above SQL �
 
 ### Task 2.1 — Write tools.yaml
 
+The correct format for genai-toolbox v0.32.0 is **multi-document YAML** with `---` separators.
+Each source, tool, and toolset is a top-level document with its own `kind` field.
+The nested-map format used in older examples is not valid.
+
 ```yaml
-sources:
-  c2-bigquery:
-    kind: bigquery
-    project: c2-intelligence
-    location: me-central1
-
+kind: source
+name: c2-bigquery
+type: bigquery
+project: c2-intelligence
+location: me-central1
+writeMode: blocked
+# blocked = only SELECT statements permitted. All our tools are read-only.
+maxQueryResultRows: 500
+# Default is 50. 500 allows document listing tools to return full results.
+---
+kind: tool
+name: list-project-documents
+type: bigquery-sql
+source: c2-bigquery
+description: List all active documents for a project.
+parameters:
+  - name: project_id
+    type: string
+    description: The project ID
+statement: |
+  SELECT document_id, layer, document_type, file_name,
+         page_count, processing_method, ingested_at
+  FROM `c2-intelligence.c2_warehouse.documents`
+  WHERE project_id = @project_id AND status = 'ACTIVE'
+  ORDER BY layer, document_type, file_name
+---
+kind: tool
+name: get-project-summary
+type: bigquery-sql
+source: c2-bigquery
+description: Get document and chunk counts for a project by layer.
+parameters:
+  - name: project_id
+    type: string
+    description: The project ID
+statement: |
+  SELECT
+    d.layer,
+    COUNT(DISTINCT d.document_id) AS document_count,
+    COUNT(c.chunk_id) AS chunk_count,
+    SUM(d.page_count) AS total_pages
+  FROM `c2-intelligence.c2_warehouse.documents` d
+  LEFT JOIN `c2-intelligence.c2_warehouse.chunks` c
+    ON d.document_id = c.document_id
+  WHERE d.project_id = @project_id AND d.status = 'ACTIVE'
+  GROUP BY d.layer
+  ORDER BY d.layer
+---
+kind: tool
+name: get-document-chunks
+type: bigquery-sql
+source: c2-bigquery
+description: Retrieve the first 50 chunks for a document in order. Admin and verification use only.
+parameters:
+  - name: document_id
+    type: string
+    description: The document ID
+statement: |
+  SELECT chunk_index, chunk_text, page_number, section_ref, token_count
+  FROM `c2-intelligence.c2_warehouse.chunks`
+  WHERE document_id = @document_id
+  ORDER BY chunk_index ASC
+  LIMIT 50
+---
+kind: tool
+name: get-user-projects
+type: bigquery-sql
+source: c2-bigquery
+description: Get all active projects accessible to a user.
+parameters:
+  - name: user_id
+    type: string
+    description: Firebase user ID
+statement: |
+  SELECT p.project_id, p.project_name, p.client_name,
+         p.contract_type, p.jurisdiction, pm.role
+  FROM `c2-intelligence.c2_warehouse.project_members` pm
+  JOIN `c2-intelligence.c2_warehouse.projects` p
+    ON pm.project_id = p.project_id
+  WHERE pm.user_id = @user_id AND p.is_active = TRUE
+  ORDER BY p.project_name
+---
+kind: tool
+name: list-all-projects
+type: bigquery-sql
+source: c2-bigquery
+description: List all active projects. Admin and verification use only.
+statement: |
+  SELECT project_id, project_name, client_name, jurisdiction, created_at
+  FROM `c2-intelligence.c2_warehouse.projects`
+  WHERE is_active = TRUE
+  ORDER BY created_at DESC
+---
+kind: tool
+name: get-audit-log
+type: bigquery-sql
+source: c2-bigquery
+description: Get the 100 most recent audit log entries for a project.
+parameters:
+  - name: project_id
+    type: string
+    description: The project ID
+statement: |
+  SELECT log_id, user_email, action, domains, query_text,
+         chunks_retrieved, model_used, latency_ms, logged_at
+  FROM `c2-intelligence.c2_warehouse.audit_log`
+  WHERE project_id = @project_id
+  ORDER BY logged_at DESC
+  LIMIT 100
+---
+kind: toolset
+name: c2-retrieval
 tools:
-  list_project_documents:
-    kind: bigquery-sql
-    source: c2-bigquery
-    description: List all active documents for a project
-    parameters:
-      - name: project_id
-        type: string
-        description: The project ID
-    statement: |
-      SELECT document_id, layer, document_type, file_name,
-             page_count, processing_method, ingested_at
-      FROM `c2-intelligence.c2_warehouse.documents`
-      WHERE project_id = @project_id AND status = 'ACTIVE'
-      ORDER BY layer, document_type, file_name
-
-  get_project_summary:
-    kind: bigquery-sql
-    source: c2-bigquery
-    description: Get document and chunk counts for a project by layer
-    parameters:
-      - name: project_id
-        type: string
-        description: The project ID
-    statement: |
-      SELECT
-        d.layer,
-        COUNT(DISTINCT d.document_id) AS document_count,
-        COUNT(c.chunk_id) AS chunk_count,
-        SUM(d.page_count) AS total_pages
-      FROM `c2-intelligence.c2_warehouse.documents` d
-      LEFT JOIN `c2-intelligence.c2_warehouse.chunks` c
-        ON d.document_id = c.document_id
-      WHERE d.project_id = @project_id AND d.status = 'ACTIVE'
-      GROUP BY d.layer
-      ORDER BY d.layer
-
-  get_document_chunks:
-    kind: bigquery-sql
-    source: c2-bigquery
-    description: Retrieve chunks for a specific document (limit 50 for admin use)
-    parameters:
-      - name: document_id
-        type: string
-        description: The document ID
-    statement: |
-      SELECT chunk_index, chunk_text, page_number, section_ref, token_count
-      FROM `c2-intelligence.c2_warehouse.chunks`
-      WHERE document_id = @document_id
-      ORDER BY chunk_index ASC
-      LIMIT 50
-
-  get_user_projects:
-    kind: bigquery-sql
-    source: c2-bigquery
-    description: Get projects accessible to a user
-    parameters:
-      - name: user_id
-        type: string
-        description: Firebase user ID
-    statement: |
-      SELECT p.project_id, p.project_name, p.client_name,
-             p.contract_type, p.jurisdiction, pm.role
-      FROM `c2-intelligence.c2_warehouse.project_members` pm
-      JOIN `c2-intelligence.c2_warehouse.projects` p
-        ON pm.project_id = p.project_id
-      WHERE pm.user_id = @user_id AND p.is_active = TRUE
-      ORDER BY p.project_name
-
-  list_all_projects:
-    kind: bigquery-sql
-    source: c2-bigquery
-    description: List all active projects (admin and verification use)
-    statement: |
-      SELECT project_id, project_name, client_name, jurisdiction, created_at
-      FROM `c2-intelligence.c2_warehouse.projects`
-      WHERE is_active = TRUE
-      ORDER BY created_at DESC
-
-  get_audit_log:
-    kind: bigquery-sql
-    source: c2-bigquery
-    description: Get recent audit log entries for a project
-    parameters:
-      - name: project_id
-        type: string
-        description: The project ID
-    statement: |
-      SELECT log_id, user_email, action, domains, query_text,
-             chunks_retrieved, model_used, latency_ms, logged_at
-      FROM `c2-intelligence.c2_warehouse.audit_log`
-      WHERE project_id = @project_id
-      ORDER BY logged_at DESC
-      LIMIT 100
-
-toolsets:
-  c2-retrieval:
-    - list_project_documents
-    - get_project_summary
-    - get_document_chunks
-    - get_user_projects
-
-  c2-admin:
-    - list_all_projects
-    - get_project_summary
-    - list_project_documents
-    - get_audit_log
-
-  c2-all:
-    - list_project_documents
-    - get_project_summary
-    - get_document_chunks
-    - get_user_projects
-    - list_all_projects
-    - get_audit_log
+  - list-project-documents
+  - get-project-summary
+  - get-document-chunks
+  - get-user-projects
+---
+kind: toolset
+name: c2-admin
+tools:
+  - list-all-projects
+  - get-project-summary
+  - list-project-documents
+  - get-audit-log
+---
+kind: toolset
+name: c2-all
+tools:
+  - list-project-documents
+  - get-project-summary
+  - get-document-chunks
+  - get-user-projects
+  - list-all-projects
+  - get-audit-log
 ```
 
-Note: `write_audit_log` is removed from tools.yaml. Audit writes are handled by `api/audit.py` directly via BigQuery Python client. The toolbox is read-only to avoid DML support uncertainty.
-
-Note: `list_all_projects` has no parameters key — omitting it entirely is the correct syntax when there are no parameters (do not use `parameters: []`).
+Notes:
+- `write_audit_log` is not in tools.yaml. Audit writes go directly via BigQuery Python client in `api/audit.py`.
+- `list-all-projects` has no `parameters` field — omit it entirely for tools with no parameters.
+- `writeMode: blocked` enforces SELECT-only at the source level as a safety guard.
+- Tool names use hyphens (`list-project-documents`) per toolbox convention.
 
 ---
 
@@ -822,11 +842,18 @@ Note: `list_all_projects` has no parameters key — omitting it entirely is the 
 
 `toolbox/Dockerfile`:
 ```dockerfile
-FROM us-central1-docker.pkg.dev/database-toolbox/toolbox/toolbox:0.31.0
+FROM us-central1-docker.pkg.dev/database-toolbox/toolbox/toolbox:0.32.0
 COPY tools.yaml /app/tools.yaml
+CMD ["/toolbox", "--config", "/app/tools.yaml", "--address", "0.0.0.0", "--port", "8080"]
 ```
 
-Note: The base image is pulled from a US registry. This adds a one-time egress cost during build. No regional mirror is currently available.
+Notes:
+- Version pinned to `0.32.0` (latest stable as of April 2026).
+- `--tools-file` was removed in v0.31.0. The correct flag is `--config`.
+- `--address 0.0.0.0` is required for Cloud Run — the default `127.0.0.1` makes the service unreachable.
+- `--port 8080` matches the Cloud Run `--port 8080` deploy flag.
+- The toolbox binary is at `/toolbox` in the base image (not `/app/toolbox`).
+- Base image pulls from a US registry — one-time egress cost during build. No regional mirror available.
 
 `toolbox/deploy.sh`:
 ```bash
@@ -895,11 +922,12 @@ This is a manual step. Yasser executes steps 1–6.
 
 ### Task 2.5 — Verify Claude Chat Can Query BigQuery
 
-Claude Chat calls `list_all_projects` (should return the GLOBAL_STANDARDS project) and `get_project_summary` (for GLOBAL_STANDARDS, should return 0 documents until Task 3.6).
+Claude Chat calls `list-all-projects` (should return the GLOBAL_STANDARDS project) and `get-project-summary` with `project_id = GLOBAL_STANDARDS` (should return 0 documents until Task 3.6).
 
 **This is the gate. No BigQuery task receives PASS until this works.**
 
 ---
+
 
 ## Phase 3 — Ingestion Pipeline
 
