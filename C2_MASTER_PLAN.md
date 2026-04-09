@@ -690,7 +690,6 @@ Set up via BigQuery console: Scheduled Queries → Create → paste above SQL �
 
 The correct format for genai-toolbox v0.32.0 is **multi-document YAML** with `---` separators.
 Each source, tool, and toolset is a top-level document with its own `kind` field.
-The nested-map format used in older examples is not valid.
 
 ```yaml
 kind: source
@@ -834,11 +833,63 @@ Notes:
 - `write_audit_log` is not in tools.yaml. Audit writes go directly via BigQuery Python client in `api/audit.py`.
 - `list-all-projects` has no `parameters` field — omit it entirely for tools with no parameters.
 - `writeMode: blocked` enforces SELECT-only at the source level as a safety guard.
-- Tool names use hyphens (`list-project-documents`) per toolbox convention.
+- Tool names use hyphens per toolbox convention.
 
 ---
 
-### Task 2.2 — Build and Push MCP Toolbox Docker Image
+### Task 2.2 — Run Toolbox Locally for Verification
+
+**This is the verification backbone during the build. No Cloud Run deployment needed.**
+
+The toolbox binary runs on Yasser's machine, points at BigQuery, and Claude Desktop connects to it for all verification tasks from Phase 1 onwards.
+
+**Download the Windows binary (PowerShell):**
+```powershell
+$VERSION = "0.32.0"
+curl.exe -o toolbox.exe "https://storage.googleapis.com/mcp-toolbox-for-databases/v$VERSION/windows/amd64/toolbox.exe"
+```
+
+**Run the toolbox locally** (from the repo root, after Phase 1 tables exist):
+```powershell
+.	oolbox.exe --config toolbox	ools.yaml
+```
+
+The toolbox listens on `http://127.0.0.1:5000`. Leave this terminal open during every build session that requires BigQuery verification.
+
+**Connect Claude Desktop** — add the following to `%APPDATA%\Claude\claude_desktop_config.json`:
+```json
+{
+  "mcpServers": {
+    "c2-toolbox": {
+      "type": "http",
+      "url": "http://127.0.0.1:5000/mcp"
+    }
+  }
+}
+```
+Restart Claude Desktop after editing the config. Confirm the `c2-toolbox` connector appears in Claude Desktop's tools list.
+
+**Verify the connection** — in Claude Desktop, ask:
+> "Using the c2-toolbox MCP connector, call list-all-projects and show me the result."
+
+Expected response: the GLOBAL_STANDARDS project row.
+
+---
+
+### Task 2.3 — Verification Gate
+
+Claude Desktop calls `list-all-projects` (should return the GLOBAL_STANDARDS project) and `get-project-summary` with `project_id = GLOBAL_STANDARDS` (should return 0 documents until Task 3.6).
+
+**This is the gate. No BigQuery task receives PASS until Claude Desktop can query BigQuery via the local toolbox.**
+
+Claude Chat issues PASS after independently confirming both tool calls return expected results.
+
+---
+
+### Task 2.4 — Build and Push MCP Toolbox Docker Image (Production)
+
+This task is required for production deployment only. It does not block verification or the ingestion/API build.
+Run after Phase 3 is complete (see deploy order in CLAUDE.md §11).
 
 `toolbox/Dockerfile`:
 ```dockerfile
@@ -853,7 +904,6 @@ Notes:
 - `--address 0.0.0.0` is required for Cloud Run — the default `127.0.0.1` makes the service unreachable.
 - `--port 8080` matches the Cloud Run `--port 8080` deploy flag.
 - The toolbox binary is at `/toolbox` in the base image (not `/app/toolbox`).
-- Base image pulls from a US registry — one-time egress cost during build. No regional mirror available.
 
 `toolbox/deploy.sh`:
 ```bash
@@ -874,7 +924,9 @@ echo "Image ready: ${IMAGE}"
 
 ---
 
-### Task 2.3 — Deploy MCP Toolbox to Cloud Run
+### Task 2.5 — Deploy MCP Toolbox to Cloud Run (Production)
+
+Run after Phase 3 complete. See deploy order in CLAUDE.md §11.
 
 ```bash
 PROJECT="c2-intelligence"
@@ -890,11 +942,10 @@ gcloud run deploy c2-toolbox \
   --port=8080 \
   --project=${PROJECT}
 
-# Record the service URL
 TOOLBOX_URL=$(gcloud run services describe c2-toolbox \
   --region=${REGION} --format='value(status.url)')
 echo "TOOLBOX_URL=${TOOLBOX_URL}"
-echo "ACTION: Record TOOLBOX_URL — needed for Phase 4 Task 4.6"
+echo "ACTION: Record TOOLBOX_URL — needed for Phase 4 Task 4.13"
 ```
 
 After deploy, rerun the IAM binding from Task 0.4:
@@ -905,29 +956,9 @@ gcloud run services add-iam-policy-binding c2-toolbox \
   --role="roles/run.invoker"
 ```
 
----
-
-### Task 2.4 — Configure OAuth for Claude.ai Connector
-
-1. GCP Console → APIs & Services → Credentials → Create Credentials → OAuth 2.0 Client ID
-2. Application type: Web application
-3. Authorized redirect URIs: obtain the exact URI from Anthropic's MCP connector documentation before this step. As of April 2026 this is typically `https://claude.ai/auth/mcp/callback` — verify before use.
-4. Store client ID: `echo -n "CLIENT_ID" | gcloud secrets versions add OAUTH_CLIENT_ID --data-file=-`
-5. Store client secret: `echo -n "CLIENT_SECRET" | gcloud secrets versions add OAUTH_CLIENT_SECRET --data-file=-`
-6. In Claude.ai Settings → Integrations → Add MCP Server → enter `TOOLBOX_URL` → authenticate with Google OAuth
-
-This is a manual step. Yasser executes steps 1–6.
+**Verification:** Claude Desktop calls `list-all-projects` via the Cloud Run URL to confirm the production toolbox is serving correctly.
 
 ---
-
-### Task 2.5 — Verify Claude Chat Can Query BigQuery
-
-Claude Chat calls `list-all-projects` (should return the GLOBAL_STANDARDS project) and `get-project-summary` with `project_id = GLOBAL_STANDARDS` (should return 0 documents until Task 3.6).
-
-**This is the gate. No BigQuery task receives PASS until this works.**
-
----
-
 
 ## Phase 3 — Ingestion Pipeline
 

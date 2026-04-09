@@ -46,11 +46,18 @@ Execute in order at the start of every session:
 
 ## 4. Verification Backbone
 
-Claude Chat connects to `c2-toolbox` via OAuth as a custom MCP connector in Claude.ai. Every task that touches BigQuery is verified by Claude Chat before PASS is issued.
+**During the build**, verification uses a local toolbox binary running on Yasser's machine. No Cloud Run deployment is needed for verification.
 
-**No PASS can be issued for any BigQuery task until Task 2.5 confirms the connector is working.** The build blocks here until confirmed.
+Verification flow:
+1. Yasser runs `toolbox.exe --config toolbox/tools.yaml` locally (after Phase 1 tables exist)
+2. Claude Desktop connects to the local toolbox at `http://127.0.0.1:5000/mcp`
+3. Claude Chat queries BigQuery through Claude Desktop's MCP connection and issues PASS
 
-For infrastructure tasks: verification is via `gcloud` CLI output or Console screenshots shared by Yasser.
+**No PASS can be issued for any BigQuery task until Task 2.3 confirms Claude Desktop can query BigQuery via the local toolbox.**
+
+For infrastructure tasks (no BigQuery): verification is via `gcloud` CLI output or Console screenshots shared by Yasser.
+
+The Cloud Run deployment of `c2-toolbox` is a **production step** (Phase 2 Tasks 2.4–2.5), not a verification prerequisite.
 
 ---
 
@@ -186,11 +193,12 @@ Read the relevant section before executing any task.
 | 1 | Phase 0 — infra, IAM, buckets, Artifact Registry, secrets | None |
 | 2 | Phase 0 (manual) — Firebase setup | None (console only) |
 | 3 | Phase 1 — BigQuery schema + GLOBAL_STANDARDS record | Phase 0 complete |
-| 4 | Phase 2 — Toolbox build, deploy, OAuth, verify (Task 2.5 gate) | Phase 1 complete |
-| 5 | Phase 3 — Ingestion deploy, Document AI, test, index, L2b | Phase 2 gate passed |
-| 6 | Phase 4 — c2-api deploy | Phase 3 complete; INGESTION_URL + TOOLBOX_URL + CLAUDE_MODEL_ID known |
-| 7 | Phase 5 — Frontend build + Vercel deploy | Phase 4 complete; API_URL known |
-| 8 | Phase 6 — Model Armor, cost controls, billing alert | Phase 5 complete |
+| 4 | Phase 2 Tasks 2.1–2.3 — tools.yaml, local toolbox, verify gate | Phase 1 complete |
+| 5 | Phase 3 — Ingestion deploy, Document AI, test, index, L2b | Task 2.3 gate passed |
+| 6 | Phase 2 Tasks 2.4–2.5 — Toolbox Docker build + Cloud Run deploy (production) | Phase 3 complete |
+| 7 | Phase 4 — c2-api deploy | Step 6 complete; INGESTION_URL + TOOLBOX_URL + CLAUDE_MODEL_ID known |
+| 8 | Phase 5 — Frontend build + Vercel deploy | Phase 4 complete; API_URL known |
+| 9 | Phase 6 — Model Armor, cost controls, billing alert | Phase 5 complete |
 
 ---
 
